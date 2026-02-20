@@ -12,6 +12,9 @@ export function PostItem({
   post: Post
   shouldPreloadImage?: boolean
 }) {
+  const createdAtDate = new Date(post.metadata.createdAt)
+  const hasValidCreatedAt = !Number.isNaN(createdAtDate.getTime())
+
   return (
     <Link
       href={`/blog/${post.slug}`}
@@ -57,9 +60,13 @@ export function PostItem({
         <dl>
           <dt className="sr-only">Published on</dt>
           <dd className="text-sm text-muted-foreground">
-            <time dateTime={new Date(post.metadata.createdAt).toISOString()}>
-              {format(new Date(post.metadata.createdAt), "dd.MM.yyyy")}
-            </time>
+            {hasValidCreatedAt ? (
+              <time dateTime={createdAtDate.toISOString()}>
+                {format(createdAtDate, "dd.MM.yyyy")}
+              </time>
+            ) : (
+              <span>{post.metadata.createdAt || "Unknown date"}</span>
+            )}
           </dd>
         </dl>
       </div>
