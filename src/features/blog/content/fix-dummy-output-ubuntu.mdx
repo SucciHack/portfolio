@@ -1,0 +1,191 @@
+---
+title: "How to Fix 'Dummy Output' Audio on Ubuntu"
+description: "Complete guide to resolving the 'Dummy Output' audio issue on Ubuntu. Step-by-step troubleshooting for PulseAudio, PipeWire, ALSA, and audio driver problems."
+image: "https://i.ytimg.com/vi/Jrb5Z1JUoCQ/hq720.jpg?sqp=-oaymwEhCK4FEIIDSFryq4qpAxMIARUAAAAAGAElAADIQj0AgKJD&rs=AOn4CLCKLGeJwRgvbeH4gwDijnBTfUvVNQ"
+category: "linux"
+createdAt: "2026-02-27"
+updatedAt: "2026-02-27"
+tags:
+  [
+    "ubuntu",
+    "linux",
+    "audio",
+    "troubleshooting",
+    "pulseaudio",
+    "pipewire",
+    "alsa",
+  ]
+---
+
+# How to Fix "Dummy Output" Audio on Ubuntu
+
+The "Dummy Output" issue means Ubuntu cannot detect your sound card. Follow these steps in order until the problem is resolved.
+
+---
+
+<Steps>
+
+<Step title="Restart PulseAudio or PipeWire">
+
+**Ubuntu 22.04 and later (PipeWire):**
+
+```bash
+systemctl --user restart pipewire pipewire-pulse wireplumber
+```
+
+**Ubuntu 20.04 and earlier (PulseAudio):**
+
+```bash
+pulseaudio --kill
+pulseaudio --start
+```
+
+> **Tip:** Check your audio after this step. If it works, you're done!
+
+</Step>
+
+<Step title="Reload ALSA">
+
+ALSA is the low-level audio layer. Reloading it can resolve detection issues.
+
+```bash
+sudo alsa force-reload
+```
+
+Then reboot:
+
+```bash
+sudo reboot
+```
+
+</Step>
+
+<Step title="Check if Your Sound Card is Detected">
+
+Run the following to list all detected sound cards:
+
+```bash
+aplay -l
+```
+
+- ✅ **Card is listed** — the issue is with PulseAudio/PipeWire (continue to Step 4)
+- ❌ **No soundcards found** — it's a driver or hardware issue (skip to Step 6)
+
+</Step>
+
+<Step title="Unmute Channels in ALSA Mixer">
+
+Your audio channels might be muted at the ALSA level.
+
+```bash
+alsamixer
+```
+
+- Use **left/right arrow keys** to navigate channels
+- Press **M** to unmute any channel showing `MM` at the bottom
+- Press **F6** to select a different sound card if needed
+- Press **Esc** to exit
+
+Then save the settings:
+
+```bash
+sudo alsactl store
+```
+
+</Step>
+
+<Step title="Reinstall Audio Packages">
+
+**For PipeWire (Ubuntu 22.04+):**
+
+```bash
+sudo apt install --reinstall pipewire pipewire-pulse wireplumber
+systemctl --user restart wireplumber pipewire pipewire-pulse
+```
+
+**For PulseAudio (Ubuntu 20.04 and earlier):**
+
+```bash
+sudo apt remove --purge pulseaudio pulseaudio-utils
+sudo apt install pulseaudio pulseaudio-utils
+sudo reboot
+```
+
+**Also reinstall ALSA base packages:**
+
+```bash
+sudo apt install --reinstall alsa-base alsa-utils
+sudo alsa force-reload
+```
+
+</Step>
+
+<Step title="Fix Missing or Broken Audio Drivers">
+
+If your sound card wasn't detected in Step 3, you likely have a driver issue.
+
+**Install recommended drivers automatically:**
+
+```bash
+sudo ubuntu-drivers autoinstall
+sudo reboot
+```
+
+**Or update your kernel (which includes newer drivers):**
+
+```bash
+sudo apt update && sudo apt full-upgrade
+sudo reboot
+```
+
+</Step>
+
+<Step title="Check Hardware with lspci / lsusb">
+
+Verify your audio hardware is visible to the system at all.
+
+**For built-in/PCIe audio:**
+
+```bash
+lspci | grep -i audio
+```
+
+**For USB audio devices:**
+
+```bash
+lsusb
+```
+
+> **Warning:** If your device doesn't appear here, check that **onboard audio is enabled** in your BIOS/UEFI settings.
+
+</Step>
+
+<Step title="Check BIOS Settings">
+
+If all software steps fail:
+
+1. Restart your PC and enter BIOS/UEFI (usually **Del**, **F2**, or **F10** on boot)
+2. Navigate to **Advanced** or **Onboard Devices** settings
+3. Make sure **HD Audio** or **Onboard Audio** is set to **Enabled**
+4. Save and exit
+
+</Step>
+
+</Steps>
+
+---
+
+## Still Not Working?
+
+Check your system logs for audio-related errors:
+
+```bash
+dmesg | grep -i audio
+journalctl --user -u pipewire --since "1 hour ago"
+```
+
+You can also post the output of these commands to the [Ubuntu Forums](https://ubuntuforums.org) or [Ask Ubuntu](https://askubuntu.com) for community help.
+
+---
+
+_Tested on Ubuntu 20.04, 22.04, and 24.04_
