@@ -1,3 +1,5 @@
+"use client"
+
 import { Overview } from "@/features/portfolio/components/overview"
 import { ProfileHeader } from "@/features/portfolio/components/profile-header"
 import { cn } from "@/lib/utils"
