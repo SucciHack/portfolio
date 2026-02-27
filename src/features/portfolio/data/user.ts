@@ -14,8 +14,8 @@ export const USER = {
     "Open Source Contributor",
   ],
   address: "Uganda",
-  phoneNumber: "", // E.164 format, base64 encoded (https://t.io.vn/base64-string-converter)
-  email: "", // base64 encoded
+  phoneNumber: "KzI1Njc0MjE4MDU0Mg==", // E.164 format, base64 encoded (https://t.io.vn/base64-string-converter)
+  email: "a2F3ZWVzaXNhbXVlbDEzNkBnbWFpbC5jb20=", // base64 encoded
   website: "https://github.com/SucciHack",
   jobTitle: "Fullstack Developer",
   jobs: [
