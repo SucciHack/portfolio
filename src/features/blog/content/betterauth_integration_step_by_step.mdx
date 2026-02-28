@@ -1,0 +1,981 @@
+---
+title: "Complete Better Auth Integration Guide for Next.js with Prisma"
+description: "Build a complete authentication system in Next.js using Better Auth with Prisma, including email/password auth, Google OAuth, password reset, custom user fields, role-based access, and Resend integration."
+image: "https://preview.redd.it/the-best-documentation-of-better-auth-integration-v0-lali0a9xxa3f1.png?width=1080&crop=smart&auto=webp&s=d4859d1d25c90d409a68a1009d259bd6bf28e0a2"
+category: "authentication"
+createdAt: "2026-02-28"
+updatedAt: "2026-02-28"
+tags:
+  [
+    "better-auth",
+    "nextjs",
+    "prisma",
+    "google-oauth",
+    "password-reset",
+    "authentication",
+    "app-router",
+    "security",
+    "typescript",
+  ]
+---
+
+# Complete Better Auth Integration Guide for Next.js with Prisma
+
+![Better Auth Integration Thumbnail](https://preview.redd.it/the-best-documentation-of-better-auth-integration-v0-lali0a9xxa3f1.png?width=1080&crop=smart&auto=webp&s=d4859d1d25c90d409a68a1009d259bd6bf28e0a2)
+
+Build a complete authentication system in Next.js using Better Auth with Prisma. This guide includes email/password authentication, Google OAuth, password reset, custom user fields, role-based access control, and Resend email integration.
+
+## Table of Contents
+
+- [Introduction](#introduction)
+- [Prerequisites](#prerequisites)
+- [Project Setup](#project-setup)
+- [Environment Configuration](#environment-configuration)
+- [Database Setup with Prisma](#database-setup-with-prisma)
+- [Better Auth Configuration](#better-auth-configuration)
+- [Authentication Components](#authentication-components)
+- [Server Actions](#server-actions)
+- [Route Protection](#route-protection)
+- [Email Integration](#email-integration)
+- [Testing Your Implementation](#testing-your-implementation)
+- [Troubleshooting Common Issues](#troubleshooting-common-issues)
+- [Additional Resources](#additional-resources)
+
+## Introduction
+
+Better Auth is a modern authentication library for TypeScript applications with strong defaults and first-class support for Next.js. Combined with Prisma, it gives you full control over your schema while keeping auth flows ergonomic.
+
+### Key Features Covered
+
+- Email/password authentication
+- Google OAuth integration
+- Password reset via email
+- Custom user fields (`firstName`, `lastName`, `phone`, `role`)
+- Role-based access control
+- Server-side session validation
+- Prisma database integration
+
+## Prerequisites
+
+Before starting, ensure you have:
+
+- Node.js 18+
+- A Next.js 14+ app using App Router
+- Basic React, TypeScript, and Prisma knowledge
+- PostgreSQL database (Neon, Supabase, or self-hosted)
+- Google OAuth credentials
+- Resend account for email delivery
+
+## Project Setup
+
+### 1) Install Required Dependencies
+
+```bash
+# Better Auth
+npm install better-auth
+
+# Prisma
+npm install prisma @prisma/client
+
+# Optional auth form stack
+npm install @hookform/resolvers zod react-hook-form sonner lucide-react
+
+# Email service
+npm install resend
+
+# Type support
+npm install -D @types/node
+```
+
+### 2) Initialize Prisma
+
+```bash
+pnpm dlx prisma init
+```
+
+## Environment Configuration
+
+Create or update `.env.local`:
+
+```env
+# Better Auth
+BETTER_AUTH_SECRET='replace_with_long_random_secret'
+BETTER_AUTH_URL='http://localhost:3000'
+
+# Database
+DATABASE_URL='postgresql://username:password@host:5432/database?sslmode=require'
+
+# Resend
+RESEND_API_KEY='your_resend_api_key'
+
+# Google OAuth
+GOOGLE_CLIENT_ID='your_google_client_id'
+GOOGLE_CLIENT_SECRET='your_google_client_secret'
+```
+
+Generate a secure auth secret:
+
+```bash
+openssl rand -base64 32
+```
+
+### Environment Variable Reference
+
+- `BETTER_AUTH_SECRET`: token signing/verification secret
+- `BETTER_AUTH_URL`: base URL of your app
+- `DATABASE_URL`: Prisma DB connection string
+- `RESEND_API_KEY`: email delivery key
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`: OAuth credentials
+
+## Database Setup with Prisma
+
+### 1) Configure Prisma Schema
+
+Update `prisma/schema.prisma`:
+
+```prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String    @id @default(cuid())
+  firstName        String
+  lastName         String
+  name             String
+  phone            String
+  role             UserRole  @default(USER)
+  email            String
+  emailVerified    Boolean
+  phoneVerified    Boolean   @default(false)
+  physicalVerified Boolean   @default(false)
+  image            String?
+  createdAt        DateTime
+  updatedAt        DateTime
+  sessions         Session[]
+  accounts         Account[]
+
+  @@unique([email])
+  @@unique([phone])
+  @@map("user")
+}
+
+enum UserRole {
+  ADMIN
+  ASSISTANT_ADMIN
+  VENDOR
+  USER
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String
+  createdAt DateTime
+  updatedAt DateTime
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime
+  updatedAt             DateTime
+
+  @@map("account")
+}
+
+model Verification {
+  id         String    @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime?
+  updatedAt  DateTime?
+
+  @@map("verification")
+}
+```
+
+### 2) Create Prisma Client Singleton
+
+Create `prisma/db.ts`:
+
+```ts
+import { PrismaClient } from "@prisma/client";
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined;
+};
+
+const db = globalForPrisma.prisma ?? new PrismaClient();
+
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = db;
+
+export default db;
+```
+
+### 3) Run Migrations
+
+```bash
+npx prisma generate
+npx prisma db push
+# or
+npx prisma migrate dev --name init
+```
+
+## Better Auth Configuration
+
+### 1) Server Configuration (`lib/auth.ts`)
+
+```ts
+import { sendEmail } from "@/actions/users";
+import db from "@/prisma/db";
+import { betterAuth } from "better-auth";
+import { prismaAdapter } from "better-auth/adapters/prisma";
+import { nextCookies } from "better-auth/next-js";
+import { headers } from "next/headers";
+
+export const auth = betterAuth({
+  database: prismaAdapter(db, {
+    provider: "postgresql",
+  }),
+  emailAndPassword: {
+    enabled: true,
+    minPasswordLength: 8,
+    autoSignIn: true,
+    sendResetPassword: async ({ user, url }) => {
+      await sendEmail({
+        to: user.email,
+        subject: "Reset your password",
+        url,
+      });
+    },
+  },
+  account: {
+    accountLinking: {
+      enabled: true,
+    },
+  },
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID as string,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
+      mapProfileToUser: (profile) => {
+        return {
+          firstName: profile.given_name,
+          lastName: profile.family_name,
+          name: profile.name,
+          email: profile.email,
+          emailVerified: profile.email_verified ?? true,
+          phone: "0000000000",
+          role: "USER",
+        };
+      },
+    },
+  },
+  user: {
+    additionalFields: {
+      role: {
+        type: "string",
+        required: false,
+        defaultValue: "USER",
+        input: false,
+      },
+      firstName: {
+        type: "string",
+        required: true,
+      },
+      lastName: {
+        type: "string",
+        required: true,
+      },
+      phone: {
+        type: "string",
+        required: true,
+      },
+    },
+  },
+  plugins: [nextCookies()],
+});
+
+export type Session = typeof auth.$Infer.Session;
+export type User = typeof auth.$Infer.Session.user;
+
+export async function getAuthUser(): Promise<User | null> {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+
+  return (session?.user as User) ?? null;
+}
+```
+
+### 2) Client Configuration (`lib/auth-client.ts`)
+
+```ts
+import { createAuthClient } from "better-auth/react";
+
+export const { signIn, signUp, useSession, signOut } = createAuthClient({
+  // baseURL: "http://localhost:3000",
+});
+```
+
+## Authentication Components
+
+### 1) Create Authentication Layout
+
+`app/(auth)/layout.tsx`
+
+```tsx
+import React, { ReactNode } from "react";
+
+export default function AuthLayout({ children }: { children: ReactNode }) {
+  return <div>{children}</div>;
+}
+```
+
+### 2) Shared Components
+
+`app/(auth)/components/AuthHeader.tsx`
+
+```tsx
+import { AppLogoIcon } from "@/components/global/app-logo-icon";
+import Link from "next/link";
+import React from "react";
+
+export default function AuthHeader({
+  title,
+  subTitle,
+}: {
+  title: string;
+  subTitle: string;
+}) {
+  return (
+    <div className="flex items-center justify-center flex-col">
+      <Link href="/" aria-label="go home">
+        <AppLogoIcon className="h-10 fill-current text-black sm:h-12" />
+      </Link>
+      <h1 className="text-title mb-1 mt-4 text-xl font-semibold">{title}</h1>
+      <p className="text-sm">{subTitle}</p>
+    </div>
+  );
+}
+```
+
+`app/(auth)/components/SubmitButton.tsx`
+
+```tsx
+import { Button } from "@/components/ui/button";
+import { RefreshCcw } from "lucide-react";
+import React from "react";
+
+export default function SubmitButton({
+  isLoading,
+  loadingTitle,
+  title,
+}: {
+  isLoading: boolean;
+  loadingTitle: string;
+  title: string;
+}) {
+  return (
+    <Button className="w-full" type="submit" disabled={isLoading}>
+      {isLoading && <RefreshCcw className="animate-spin w-4 h-4 mr-2" />}
+      {isLoading ? loadingTitle : title}
+    </Button>
+  );
+}
+```
+
+`app/(auth)/components/SocialButtons.tsx`
+
+```tsx
+"use client";
+
+import React from "react";
+import { signIn } from "@/lib/auth-client";
+import { Button } from "@/components/ui/button";
+import { Icons } from "@/components/global/icons";
+
+export default function SocialButtons() {
+  async function handleSignIn(provider: "google") {
+    await signIn.social({ provider });
+  }
+
+  return (
+    <div className="mt-6 grid grid-cols-1 gap-3">
+      <Button onClick={() => handleSignIn("google")} type="button" variant="outline">
+        <Icons.google />
+        <span>Google</span>
+      </Button>
+    </div>
+  );
+}
+```
+
+### 3) Auth Pages
+
+`app/(auth)/signup/page.tsx`
+
+```tsx
+import React from "react";
+import Signup from "../components/signup";
+
+export default function Page() {
+  return <Signup />;
+}
+```
+
+`app/(auth)/login/page.tsx`
+
+```tsx
+import React from "react";
+import Login from "../components/login";
+
+export default function Page() {
+  return <Login />;
+}
+```
+
+`app/(auth)/forgot-password/page.tsx`
+
+```tsx
+import React from "react";
+import ForgotPassword from "../components/forgot-password";
+
+export default function Page() {
+  return <ForgotPassword />;
+}
+```
+
+`app/(auth)/reset-password/page.tsx`
+
+```tsx
+import React from "react";
+import ResetPassword from "../components/reset-password";
+import { ErrorCard } from "../components/ErrorCard";
+
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ token: string }>;
+}) {
+  const { token } = await searchParams;
+
+  if (!token) {
+    return <ErrorCard />;
+  }
+
+  return <ResetPassword token={token} />;
+}
+```
+
+## Server Actions
+
+Create `actions/users.ts`:
+
+```ts
+"use server";
+
+import PasswordResetEmail from "@/emails/password-reset-email";
+import { Resend } from "resend";
+import { auth } from "@/lib/auth";
+import {
+  ForgotPasswordFormValues,
+  LoginFormValues,
+  RegisterFormValues,
+} from "@/types/user.schema";
+import { APIError } from "better-auth/api";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+const baseUrl = process.env.BETTER_AUTH_URL || "";
+
+export async function registerUser(data: RegisterFormValues) {
+  try {
+    await auth.api.signUpEmail({
+      body: {
+        email: data.email,
+        password: data.password,
+        name: `${data.firstName} ${data.lastName}`,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        phone: data.phone,
+      },
+    });
+
+    return {
+      success: true,
+      data,
+      error: null,
+    };
+  } catch (error) {
+    if (error instanceof APIError && error.status === "UNPROCESSABLE_ENTITY") {
+      const errorMsg =
+        error.message === "Failed to create user"
+          ? "Phone Number is Already Taken"
+          : "Email is Already Taken";
+
+      return {
+        success: false,
+        data: null,
+        error: errorMsg,
+        status: error.status,
+      };
+    }
+
+    return {
+      success: false,
+      data: null,
+      error: "Something went wrong",
+    };
+  }
+}
+
+export async function loginUser(data: LoginFormValues) {
+  try {
+    await auth.api.signInEmail({
+      body: {
+        email: data.email,
+        password: data.password,
+      },
+    });
+
+    return {
+      success: true,
+      data,
+      error: null,
+    };
+  } catch (error) {
+    if (error instanceof APIError && error.status === "UNAUTHORIZED") {
+      return {
+        success: false,
+        data: null,
+        error: error.message,
+        status: error.status,
+      };
+    }
+
+    return {
+      success: false,
+      data: null,
+      error: "Something went wrong",
+    };
+  }
+}
+
+export async function sendForgotPasswordToken(formData: ForgotPasswordFormValues) {
+  try {
+    const data = await auth.api.forgetPassword({
+      body: {
+        email: formData.email,
+        redirectTo: `${baseUrl}/reset-password`,
+      },
+    });
+
+    return {
+      success: true,
+      data,
+      error: null,
+    };
+  } catch (error) {
+    if (error instanceof APIError && error.status === "UNAUTHORIZED") {
+      return {
+        success: false,
+        data: null,
+        error: error.message,
+        status: error.status,
+      };
+    }
+
+    return {
+      success: false,
+      data: null,
+      error: "Something went wrong",
+    };
+  }
+}
+
+export async function resetPassword(formData: {
+  newPassword: string;
+  token: string;
+}) {
+  try {
+    const data = await auth.api.resetPassword({
+      body: {
+        newPassword: formData.newPassword,
+        token: formData.token,
+      },
+    });
+
+    return {
+      success: true,
+      data,
+      error: null,
+    };
+  } catch (error) {
+    if (error instanceof APIError && error.status === "UNAUTHORIZED") {
+      return {
+        success: false,
+        data: null,
+        error: error.message,
+        status: error.status,
+      };
+    }
+
+    return {
+      success: false,
+      data: null,
+      error: "Something went wrong",
+    };
+  }
+}
+
+type SendMailData = {
+  to: string;
+  subject: string;
+  url: string;
+};
+
+export async function sendEmail(data: SendMailData) {
+  try {
+    const { data: resData, error } = await resend.emails.send({
+      from: "Auth Team <onboarding@resend.dev>",
+      to: data.to,
+      subject: data.subject,
+      react: PasswordResetEmail({
+        userEmail: data.to,
+        resetLink: data.url,
+        expirationTime: "10 Mins",
+      }),
+    });
+
+    if (error) {
+      return {
+        success: false,
+        error,
+        data: null,
+      };
+    }
+
+    return {
+      success: true,
+      error: null,
+      data: resData,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error,
+      data: null,
+    };
+  }
+}
+```
+
+### Key Server Actions
+
+- `registerUser`: creates users with custom fields
+- `loginUser`: authenticates using email/password
+- `sendForgotPasswordToken`: generates password reset links
+- `resetPassword`: updates password using reset token
+- `sendEmail`: sends transactional email through Resend
+
+## Route Protection
+
+### 1) Basic Server-Side Protection
+
+```tsx
+import { getAuthUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
+
+export default async function DashboardPage() {
+  const user = await getAuthUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  return (
+    <div>
+      <h1>Welcome, {user.name}!</h1>
+      <p>Role: {user.role}</p>
+    </div>
+  );
+}
+```
+
+### 2) Role-Based Protection Utility
+
+```ts
+import { getAuthUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
+
+export async function requireAuth(allowedRoles?: string[]) {
+  const user = await getAuthUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
+    redirect("/unauthorized");
+  }
+
+  return user;
+}
+```
+
+Usage:
+
+```tsx
+export default async function AdminPage() {
+  const user = await requireAuth(["ADMIN", "ASSISTANT_ADMIN"]);
+
+  return <div>Admin content for {user.name}</div>;
+}
+```
+
+### 3) Client-Side Session Guard
+
+```tsx
+"use client";
+
+import { useSession } from "@/lib/auth-client";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+
+export default function ProtectedComponent() {
+  const { data: session, isPending } = useSession();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isPending && !session) {
+      router.push("/login");
+    }
+  }, [session, isPending, router]);
+
+  if (isPending) return <div>Loading...</div>;
+  if (!session) return null;
+
+  return <div>Protected content for {session.user.name}</div>;
+}
+```
+
+## Email Integration
+
+### 1) Password Reset Email Template
+
+Create `emails/password-reset-email.tsx`:
+
+```tsx
+import {
+  Body,
+  Button,
+  Container,
+  Head,
+  Html,
+  Preview,
+  Section,
+  Text,
+} from "@react-email/components";
+
+interface PasswordResetEmailProps {
+  userEmail: string;
+  resetLink: string;
+  expirationTime: string;
+}
+
+export default function PasswordResetEmail({
+  userEmail,
+  resetLink,
+  expirationTime,
+}: PasswordResetEmailProps) {
+  return (
+    <Html>
+      <Head />
+      <Preview>Reset your password</Preview>
+      <Body style={main}>
+        <Container style={container}>
+          <Section>
+            <Text style={heading}>Password Reset Request</Text>
+            <Text style={text}>Hello {userEmail},</Text>
+            <Text style={text}>
+              We received a request to reset your password. Click the button below to reset it.
+            </Text>
+            <Button href={resetLink} style={button}>
+              Reset Password
+            </Button>
+            <Text style={text}>
+              This link will expire in {expirationTime}. If you did not request this, ignore this email.
+            </Text>
+          </Section>
+        </Container>
+      </Body>
+    </Html>
+  );
+}
+
+const main = {
+  backgroundColor: "#f6f9fc",
+  fontFamily:
+    '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Ubuntu,sans-serif',
+};
+
+const container = {
+  backgroundColor: "#ffffff",
+  margin: "0 auto",
+  padding: "20px 0 48px",
+  marginBottom: "64px",
+};
+
+const heading = {
+  fontSize: "24px",
+  letterSpacing: "-0.5px",
+  lineHeight: "1.3",
+  fontWeight: "400",
+  color: "#484848",
+  padding: "17px 0 0",
+};
+
+const text = {
+  color: "#484848",
+  fontSize: "16px",
+  lineHeight: "26px",
+};
+
+const button = {
+  backgroundColor: "#5469d4",
+  borderRadius: "4px",
+  color: "#fff",
+  fontSize: "16px",
+  textDecoration: "none",
+  textAlign: "center" as const,
+  display: "block",
+  width: "200px",
+  padding: "12px 0",
+  margin: "20px 0",
+};
+```
+
+### 2) Better Auth API Route
+
+Create `app/api/auth/[...all]/route.ts`:
+
+```ts
+import { auth } from "@/lib/auth";
+import { toNextJsHandler } from "better-auth/next-js";
+
+const { GET, POST } = toNextJsHandler(auth);
+
+export { GET, POST };
+```
+
+## Testing Your Implementation
+
+### 1) Test Registration
+
+1. Open `/signup`
+2. Submit a valid registration form
+3. Confirm user row exists in DB
+4. Verify user is signed in automatically
+
+### 2) Test Login
+
+1. Open `/login`
+2. Sign in with valid credentials
+3. Confirm redirect to protected route
+4. Verify session persistence after refresh
+
+### 3) Test Password Reset
+
+1. Open `/forgot-password`
+2. Submit existing account email
+3. Confirm reset email arrives
+4. Open reset link and update password
+5. Verify login with new password
+
+### 4) Test Google OAuth
+
+1. Click Google sign-in button
+2. Complete consent flow
+3. Verify user creation and mapped fields
+4. Confirm account linking behavior
+
+### 5) Test Route Protection
+
+1. Access protected route while logged out
+2. Confirm redirect to `/login`
+3. Verify role restrictions for admin routes
+
+## Troubleshooting Common Issues
+
+### 1) Database Errors
+
+```bash
+npx prisma db push
+npx prisma migrate status
+```
+
+### 2) Missing Environment Variables
+
+Validate these are present:
+
+- `BETTER_AUTH_SECRET`
+- `BETTER_AUTH_URL`
+- `DATABASE_URL`
+- `RESEND_API_KEY`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+
+### 3) OAuth Mismatch Errors
+
+Ensure your Google OAuth callback URLs and `BETTER_AUTH_URL` match your active environment.
+
+### 4) Email Delivery Failures
+
+- Verify Resend API key
+- Verify sender identity/domain
+- Test sending a simple email first
+
+## Additional Resources
+
+- Better Auth official documentation
+- Better Auth GitHub repository
+- Prisma documentation
+- Resend documentation
+- Next.js App Router documentation
+
+## Conclusion
+
+You now have a complete Better Auth + Prisma authentication foundation with:
+
+- Email/password authentication
+- Google OAuth
+- Password reset functionality
+- Custom user fields and role support
+- Protected routes and role-based access
+- Transactional email integration
+
+This structure is a solid base for adding email verification, two-factor authentication, additional providers, and advanced audit/security controls.
